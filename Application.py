@@ -206,6 +206,23 @@ class Application(wx.Frame):
                 nW = nH * (1 / R)
 
             img = img.Scale(nW, nH, wx.IMAGE_QUALITY_HIGH)
+        else:
+
+            r = h / w
+            R = H / W
+
+            if r >= R:
+                # fit width
+                nW = w
+                nH = nW * R
+
+            else:
+                # fit height
+                nH = h
+                nW = nH * (1 / R)
+
+            img = img.Scale(nW, nH, wx.IMAGE_QUALITY_HIGH)
+
 
 
         print("pic:" + str(W) + " " + str(H))
@@ -213,6 +230,9 @@ class Application(wx.Frame):
         self.photo.SetBitmap(wx.Bitmap(img))
         posX = w/2-nW/2
         self.photo.SetPosition((posX, 0))
+        self.photo.SetBackgroundColour("Grey")
+        self.panel1.SetBackgroundColour("Grey")
+        self.panel1.Refresh()
         pass
 
     def BuildFileTree(self, data, showFile=True):
@@ -227,8 +247,8 @@ class Application(wx.Frame):
                 self.file_tree.AppendItem(root_item, files, ct_type=0)
 
                 # item = self.file_tree.AppendItem(self.root, "wangjian", ct_type=0)
-        self.file_tree.ExpandAll()
-        # self.file_tree.Expand(root_item)
+        # self.file_tree.ExpandAll()
+        self.file_tree.Expand(root_item)
 
     def AddFileTreeBlock(self, data, root_item, showFile=True):
         item = self.file_tree.AppendItem(root_item, data["name"], ct_type=0, data=data)
