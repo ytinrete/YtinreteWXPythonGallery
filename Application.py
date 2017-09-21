@@ -147,11 +147,31 @@ class Application(wx.Frame):
         if _next:
             if index < total - 1:
                 self.file_tree.SelectItem(parent.GetChildren()[index + 1])
+            else:
+                # see parent's next
+                grand = parent.GetParent()
+                index_p = 0
+                total_p = len(grand.GetChildren())
+                for i in range(0, total_p):
+                    if parent == grand.GetChildren()[i]:
+                        index_p = i
+                        break
+                if index_p != total_p - 1:
+                    self.file_tree.SelectItem(grand.GetChildren()[index_p + 1].GetChildren()[0])
         else:
             if index > 0:
                 self.file_tree.SelectItem(parent.GetChildren()[index - 1])
-
-            pass
+            else:
+                # see parent's last
+                grand = parent.GetParent()
+                index_p = 0
+                total_p = len(grand.GetChildren())
+                for i in range(0, total_p):
+                    if parent == grand.GetChildren()[i]:
+                        index_p = i
+                        break
+                if index_p > 0:
+                    self.file_tree.SelectItem(grand.GetChildren()[index_p - 1].GetChildren()[0])
 
         pass
 
@@ -174,7 +194,7 @@ class Application(wx.Frame):
 
         h = self.photo.Size.height
         w = self.photo.Size.width
-        print("p1:" + str(w) + " " + str(h))#this will somehow change @#$%@#$R@#$%!!!
+        print("p1:" + str(w) + " " + str(h))  # this will somehow change @#$%@#$R@#$%!!!
 
         h = self.panel1.Size.height
         w = self.panel1.Size.width
@@ -223,12 +243,10 @@ class Application(wx.Frame):
 
             img = img.Scale(nW, nH, wx.IMAGE_QUALITY_HIGH)
 
-
-
         print("pic:" + str(W) + " " + str(H))
         print("sc:" + str(nW) + " " + str(nH))
         self.photo.SetBitmap(wx.Bitmap(img))
-        posX = w/2-nW/2
+        posX = w / 2 - nW / 2
         self.photo.SetPosition((posX, 0))
         self.photo.SetBackgroundColour("Grey")
         self.panel1.SetBackgroundColour("Grey")
