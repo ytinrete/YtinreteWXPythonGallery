@@ -101,8 +101,6 @@ class Application(wx.Frame):
         #
         # box_all.Add(wx.Button(parent=panel, label=u'line one'), flag=wx.EXPAND, proportion=wx.EXPAND)
 
-
-
         panel.SetAutoLayout(True)
 
         panel.SetSizer(box_all)
@@ -247,7 +245,8 @@ class Application(wx.Frame):
         print("sc:" + str(nW) + " " + str(nH))
         self.photo.SetBitmap(wx.Bitmap(img))
         posX = w / 2 - nW / 2
-        self.photo.SetPosition((posX, 0))
+        posY = h / 2 - nH / 2
+        self.photo.SetPosition((posX, posY))
         self.photo.SetBackgroundColour("Grey")
         self.panel1.SetBackgroundColour("Grey")
         self.panel1.Refresh()
