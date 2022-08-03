@@ -1,137 +1,272 @@
 import wx
-import os
-import platform
-import subprocess
 import wx.lib.agw.customtreectrl as customtree
-import ntpath
+import os
+from pathlib import Path
+import datetime
+from random import randrange
 
 
-class AppDropTarget(wx.FileDropTarget):
-    def __init__(self, obj):
-        wx.FileDropTarget.__init__(self)
-        self.obj = obj
+class PhotoInfo:
+    '''record all the info of a photo file'''
+    fileParentFolderName: str
+    fileName: str
+    fileFullPath: str
+    fileModifyDate: str
 
-    def SetApp(self, app):
-        self.app = app
 
-    def OnDropFiles(self, x, y, paths):
-        if self.app:
-            self.app.OnDropFiles(self, x, y, paths)
-        return 0
+class State:
+    '''record all the origin data from import'''
+    originPhotoRootPath: str
+    originPhotos: []
+    filteredPhotos = []
+
+
+class PhotoTree(customtree.CustomTreeCtrl):
+    def __init__(self, parent):
+        super().__init__(parent, agwStyle=wx.TR_HAS_BUTTONS | wx.TR_FULL_ROW_HIGHLIGHT)
+        self.treeRoot = None
+        self.treeGroup = {}
+
+    def loadData(self, filteredPhotos):
+        self.DeleteAllItems()
+        self.treeGroup = {}
+        self.treeRoot = self.AddRoot("root")
+
+        folderPhotoMap = {}
+
+        def sortFunc(photo):
+            return photo.fileName
+
+        for photo in filteredPhotos:
+            if folderPhotoMap.get(photo.fileParentFolderName) is None:
+                folderPhotoMap[photo.fileParentFolderName] = []
+            folderPhotoMap[photo.fileParentFolderName].append(photo)
+
+        folderList = list(folderPhotoMap.keys())
+        folderList.sort()
+
+        for folder in folderList:
+            folderNode = self.AppendItem(self.treeRoot, folder, data=folder)
+            photoList = folderPhotoMap[folder]
+            photoList.sort(key=sortFunc)
+            photoNodeList = []
+            for photo in photoList:
+                photoNode = self.AppendItem(folderNode, photo.fileName, data=photo)
+                photoNodeList.append(photoNode)
+            self.treeGroup[folderNode] = photoNodeList
+
+        self.SelectItem(self.treeRoot)
+        self.ExpandAll()
+        # self.treeRoot.Expand()
+
+    def setSelectForPhoto(self, choosePhoto):
+        for folder, photoList in self.treeGroup.items():
+            for photo in photoList:
+                data = photo.GetData()
+                if isinstance(data, PhotoInfo) and data.fileFullPath == choosePhoto.fileFullPath:
+                    self.SelectItem(photo)
+                    return
 
 
 class Application(wx.Frame):
     def __init__(self, parent, title):
         super(Application, self).__init__(parent, title=title, size=(800, 600))
-        self.init_ui()
+        self.state = State()
+        self.__init_ui()
         self.Centre()
         self.Show()
 
-    def init_ui(self):
-        panel = wx.Panel(self)
+    def __init_ui(self):
 
-        box_all = wx.BoxSizer(wx.HORIZONTAL)
+        '''
+        main ui
+        ---------
+            -mainPanel
+                -mainSizer
+                    -leftPanel
+                    -rightPanel
+        '''
+        self.mainPanel = wx.Panel(self)
+        self.mainPanel.SetAutoLayout(True)
+        self.mainSizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.mainPanel.SetSizer(self.mainSizer)
 
-        self.panel1 = wx.Panel(panel, -1, style=wx.SUNKEN_BORDER)
-        self.panel1.SetBackgroundColour("Black")
-        # panel2 = wx.Panel(panel, -1, style=wx.SUNKEN_BORDER)
-        # panel2.SetBackgroundColour("red")
-        # panel3 = wx.Panel(panel, -1, style=wx.SUNKEN_BORDER)
-        # panel3.SetBackgroundColour("yellow")
-        # panel4 = wx.Panel(panel, -1, style=wx.SUNKEN_BORDER)
-        # panel4.SetBackgroundColour("grey")
+        '''
+        left components
+        ----------------
+            -leftPanel
+                -leftPanelSizer
+                    -leftImportBtn
+                    -Text 'Folder Files'
+                    -leftFileTree
+                    -Text 'Filter By Time'
+                    -Text 'From'
+                    -leftFilterByTimeFrom
+                    -Text 'To'
+                    -leftFilterByTimeTo
+                    -leftFilterByTimeBtn
+                    -Text 'Filter By keyword'
+                    -leftFilterByKeyword
+                    -leftFilterByKeywordBtn
+                    -Text 'actions'
+                    
+        '''
+        self.leftPanel = wx.Panel(self.mainPanel, -1, style=wx.SUNKEN_BORDER)
+        self.leftPanel.SetAutoLayout(True)
+        self.mainSizer.Add(self.leftPanel, 2, wx.EXPAND)
 
-        photo_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        self.photo = wx.StaticBitmap(self.panel1, wx.ID_ANY)
-        self.photo.SetBackgroundColour("Grey")
-        photo_sizer.Add(self.photo, 1, wx.EXPAND)
-        self.panel1.SetSizer(photo_sizer)
-        self.panel1.SetAutoLayout(True)
+        self.leftSizer = wx.BoxSizer(wx.VERTICAL)
+        self.leftPanel.SetSizer(self.leftSizer)
 
-        left_box = wx.BoxSizer(wx.VERTICAL)
-        left_box.Add(wx.StaticText(panel, label='Drag folder here'))
+        self.leftImportBtn = wx.Button(self.leftPanel, -1, "import")
+        self.leftImportBtn.Bind(wx.EVT_BUTTON, self.onImportBtnClick)
+        self.leftSizer.Add(self.leftImportBtn, 0, wx.EXPAND | wx.BOTTOM, 20)
 
-        # left_box.Add(panel2, 1, wx.EXPAND)
-        self.list_box_root = wx.ListBox(panel, -1, style=wx.LB_SINGLE)
-        self.Bind(wx.EVT_LISTBOX, self.OnListBoxRootSelect, self.list_box_root)
-        self.Bind(wx.EVT_LISTBOX_DCLICK, self.OnListBoxRootDouble, self.list_box_root)
+        self.leftSizer.Add(wx.StaticText(self.leftPanel, label='Folder Files'))
 
-        drop = AppDropTarget(self)
-        drop.SetApp(self)
-        panel.SetDropTarget(drop)
+        self.leftFileTree = PhotoTree(self.leftPanel)
+        self.leftFileTree.SetBackgroundColour("White")
+        self.leftFileTree.Bind(wx.EVT_TREE_SEL_CHANGED, self.onPhotoTreeSelectionChange)
+        # self.leftFileTree.Bind(wx.EVT_TREE_KEY_DOWN, self.onPhotoTreeKeyDown)
+        self.leftSizer.Add(self.leftFileTree, 1, wx.EXPAND | wx.BOTTOM, 20)
 
-        left_box.Add(self.list_box_root, 1, wx.EXPAND)
+        self.leftSizer.Add(wx.StaticText(self.leftPanel, label='Filter By Time'))
+        self.leftSizer.Add(wx.StaticText(self.leftPanel, label='From'))
+        self.leftFilterByTimeFrom = wx.TextCtrl(self.leftPanel)
+        self.leftSizer.Add(self.leftFilterByTimeFrom, 0, wx.EXPAND)
+        self.leftSizer.Add(wx.StaticText(self.leftPanel, label='To'))
+        self.leftFilterByTimeTo = wx.TextCtrl(self.leftPanel)
+        self.leftSizer.Add(self.leftFilterByTimeTo, 0, wx.EXPAND)
+        self.leftFilterByTimeBtn = wx.Button(self.leftPanel, -1, "FilterByTime")
+        self.leftFilterByTimeBtn.Bind(wx.EVT_BUTTON, self.onFilterByTimeBtnClick)
+        self.leftSizer.Add(self.leftFilterByTimeBtn, 0, wx.EXPAND | wx.BOTTOM, 20)
 
-        left_box.Add(wx.StaticText(panel, label='file tree from folder'))
+        self.leftSizer.Add(wx.StaticText(self.leftPanel, label='Filter By keyword'))
+        self.leftFilterByKeyword = wx.TextCtrl(self.leftPanel, style=wx.TE_PROCESS_ENTER)
 
-        # self.file_tree = wx.GenericDirCtrl(panel, -1, style=wx.DIRCTRL_DIR_ONLY)
+        self.leftFilterByKeyword.Bind(wx.EVT_TEXT_ENTER, self.onFilterByKeywordTextCtrlEnter)
 
-        self.file_tree = customtree.CustomTreeCtrl(panel, -1, agwStyle=wx.TR_DEFAULT_STYLE | wx.TR_NO_BUTTONS)
-        self.file_tree.SetBackgroundColour("White")
-        # self.file_tree.SetBorderPen(wx.Pen("Black", 10))
+        self.leftSizer.Add(self.leftFilterByKeyword, 0, wx.EXPAND)
+        self.leftFilterByKeywordBtn = wx.Button(self.leftPanel, -1, "FilterByKeyword")
+        self.leftFilterByKeywordBtn.Bind(wx.EVT_BUTTON, self.onFilterByKeywordBtnClick)
+        self.leftSizer.Add(self.leftFilterByKeywordBtn, 0, wx.EXPAND | wx.BOTTOM, 20)
 
-        self.Bind(customtree.EVT_TREE_SEL_CHANGED, self.OnTreeFolderItemSelect, self.file_tree)
-        self.Bind(customtree.EVT_TREE_ITEM_ACTIVATED, self.OnTreeFolderItemActived, self.file_tree)
+        self.leftSizer.Add(wx.StaticText(self.leftPanel, label='Actions'))
+        self.leftActionRandomSelectBtn = wx.Button(self.leftPanel, -1, "RandomSelect")
+        self.leftActionRandomSelectBtn.Bind(wx.EVT_BUTTON, self.onActionRandomSelectBtnClick)
+        self.leftSizer.Add(self.leftActionRandomSelectBtn, 0, wx.EXPAND | wx.TOP | wx.BOTTOM, 20)
 
-        # self.file_tree = wx.GenericDirCtrl(panel, dir = wx.EmptyString, style=wx.DIRCTRL_3D_INTERNAL | wx.SUNKEN_BORDER)
+        '''
+                right photo parts
+                -----------------
+                    -rightPanel
+                        -rightSizer
+                            -rightPhoto
+                '''
+        self.rightPanel = wx.Panel(self.mainPanel, -1, style=wx.SUNKEN_BORDER)
+        self.rightPanel.SetBackgroundColour("Grey")
+        self.rightPanel.SetAutoLayout(True)
+        self.mainSizer.Add(self.rightPanel, 10, wx.EXPAND)
 
-        # file_tree = self.file_tree.GetTreeCtrl()
-        # file_tree.AppendItem(file_tree.GetRootItem(), "/Users/lirui")
+        self.rightSizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.rightPanel.SetSizer(self.rightSizer)
 
-        left_box.Add(self.file_tree, 3, wx.EXPAND)
+        self.rightPhoto = wx.StaticBitmap(self.rightPanel, wx.ID_ANY)
+        self.rightPhoto.SetBackgroundColour("Grey")
+        self.rightSizer.Add(self.rightPhoto, 1, wx.EXPAND)
 
-        left_box.Add(wx.StaticText(panel, label='photo files'))
+    def onImportBtnClick(self, event):
+        with wx.DirDialog(None, "Choose photo root folder directory", "",
+                          wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as fileDialog:
+            if fileDialog.ShowModal() == wx.ID_CANCEL:
+                return  # the user changed their mind
 
-        self.list_box_files = wx.ListBox(panel, -1, style=wx.LB_SINGLE)
-        self.Bind(wx.EVT_LISTBOX, self.OnListBoxFilesSelect, self.list_box_files)
-        self.Bind(wx.EVT_LISTBOX_DCLICK, self.OnListBoxFilesDouble, self.list_box_files)
+            # Proceed loading the file chosen by the user
+            pathname = fileDialog.GetPath()
+            print("onImportBtnClick:" + pathname)
+            self.state.originPhotoRootPath = pathname
+            self.importNewPhotoRoot()
 
-        self.list_box_files.Bind(wx.EVT_KEY_UP, self.OnListBoxFilesKey)
+    def importNewPhotoRoot(self):
+        print("importNewPhotoRoot:" + self.state.originPhotoRootPath)
+        self.state.originPhotos = []
+        for root, dirs, files in os.walk(self.state.originPhotoRootPath):
+            for file in files:
+                if not file.startswith(".") and os.path.getsize(os.path.join(root, file)) > 10 and (
+                        file.endswith(".jpg") or file.endswith(".jpeg") or file.endswith(".png")):
+                    print(os.path.join(root, file))
+                    fullPath = Path(os.path.join(root, file))
+                    photo = PhotoInfo()
+                    photo.fileName = file
+                    photo.fileFullPath = str(fullPath.absolute())
+                    photo.fileParentFolderName = fullPath.parent.name
+                    photo.fileModifyDate = datetime.datetime.fromtimestamp(
+                        os.path.getmtime(photo.fileFullPath)).strftime("%Y%m%d")
+                    self.state.originPhotos.append(photo)
+                    print("loaded:" + file)
+        self.leftFilterByTimeFrom.SetValue("")
+        self.leftFilterByTimeTo.SetValue("")
+        self.leftFilterByKeyword.SetValue("")
+        self.doFilterByTime()
+        self.resetFileTreeByFilteredData()
 
-        left_box.Add(self.list_box_files, 2, wx.EXPAND)
+    def onFilterByTimeBtnClick(self, event):
+        self.doFilterByTime()
 
-        box_all.Add(left_box, 2, wx.EXPAND)
-        box_all.Add(self.panel1, 10, wx.EXPAND)
+    def doFilterByTime(self):
+        self.leftFilterByKeyword.SetValue("")
+        '''20220801'''
+        fromTime = self.leftFilterByTimeFrom.GetValue()
+        if len(fromTime) != 8 or fromTime.strip() == "":
+            fromTime = "00000000"
+        toTime = self.leftFilterByTimeTo.GetValue()
+        if len(toTime) != 8 or toTime.strip() == "":
+            print("invalid toTime")
+            toTime = "99999999"
 
-        #
-        # p1 = wx.Panel(panel)
-        # p1.SetBackgroundColour('#eded43')
-        #
-        # box_all.Add(p1, flag=wx.RIGHT|wx.EXPAND, border=8)
-        #
-        # box_all.Add(wx.Button(parent=panel, label=u'line one'), flag=wx.EXPAND, proportion=wx.EXPAND)
+        print("fromTime:" + fromTime + " toTime:" + toTime)
 
+        self.state.filteredPhotos = []
+        for photo in self.state.originPhotos:
+            if fromTime <= photo.fileModifyDate <= toTime:
+                self.state.filteredPhotos.append(photo)
+        self.resetFileTreeByFilteredData()
 
+    def onFilterByKeywordBtnClick(self, event):
+        self.doFilterByKeyword()
 
-        panel.SetAutoLayout(True)
+    def onFilterByKeywordTextCtrlEnter(self, event):
+        self.doFilterByKeyword()
 
-        panel.SetSizer(box_all)
+    def doFilterByKeyword(self):
+        self.leftFilterByTimeFrom.SetValue("")
+        self.leftFilterByTimeTo.SetValue("")
+        keyword = self.leftFilterByKeyword.GetValue().strip()
+        print("keyword:" + keyword)
 
-        pass
+        self.state.filteredPhotos = []
+        for photo in self.state.originPhotos:
+            if photo.fileName.find(keyword) >= 0 or keyword == "":
+                self.state.filteredPhotos.append(photo)
+        self.resetFileTreeByFilteredData()
 
-    def OnListBoxRootDouble(self, event):
-        print("double")
-        print(event.GetEventObject().GetItems()[0])
+    def resetFileTreeByFilteredData(self):
+        self.leftFileTree.loadData(self.state.filteredPhotos)
 
-        aaa = str(event.GetEventObject().GetItems()[0])
+    def onPhotoTreeSelectionChange(self, event):
+        data = self.leftFileTree.GetSelection().GetData()
+        if isinstance(data, PhotoInfo):
+            self.showPicture(data.fileFullPath)
 
-        self.open_file(aaa)
+    def onActionRandomSelectBtnClick(self, event):
+        selected = self.state.filteredPhotos[randrange(len(self.state.filteredPhotos))]
+        self.leftFileTree.setSelectForPhoto(selected)
+        self.showPicture(selected.fileFullPath)
 
-    def OnListBoxRootSelect(self, event):
-        # indexSelected = event.GetEventObject().GetSelection()
-        # print('选中Item的下标：', indexSelected)
-        # print(event.GetEventObject().GetItems()[0])
-        self.BuildFileTree(event.ClientData, False)
-        pass
-
-    def OnListBoxFilesKey(self, event):
-        print(event.GetKeyCode())
-        if event.GetKeyCode() == wx.WXK_RIGHT:
-            print("r")
-            self.FileTreeMove(True)
-        elif event.GetKeyCode() == wx.WXK_LEFT:
-            print("l")
-            self.FileTreeMove(False)
+    def onPhotoTreeKeyDown(self, event):
+        # TODO moving by keyboard
+        if event.GetKeyCode() == wx.WXK_DOWN:
+            print("kkk")
 
     def FileTreeMove(self, _next=True):
         item = self.file_tree.GetSelection()
@@ -173,182 +308,49 @@ class Application(wx.Frame):
                 if index_p > 0:
                     self.file_tree.SelectItem(grand.GetChildren()[index_p - 1].GetChildren()[0])
 
-        pass
-
-    def OnListBoxFilesDouble(self, event):
-        print("double")
-        print(event.GetEventObject().GetItems()[0])
-        self.open_file(self.list_box_files_path)
-        pass
-
-    def OnListBoxFilesSelect(self, event):
-        indexSelected = event.GetEventObject().GetSelection()
-        # print('选中Item的下标：', indexSelected)
-        # print(event.GetEventObject().GetItems()[0])
-        # self.BuildFileTree(event.ClientData, False)
-        self.ShowPic(os.path.join(self.list_box_files_path, event.GetEventObject().GetItems()[indexSelected]))
-        pass
-
-    def ShowPic(self, location):
-        # print("pic!" + location)
-
-        h = self.photo.Size.height
-        w = self.photo.Size.width
-        print("p1:" + str(w) + " " + str(h))  # this will somehow change @#$%@#$R@#$%!!!
-
-        h = self.panel1.Size.height
-        w = self.panel1.Size.width
+    def showPicture(self, fileFullPath):
+        print("showPicture:" + fileFullPath)
+        h = self.rightPanel.Size.height
+        w = self.rightPanel.Size.width
         print("p2:" + str(w) + " " + str(h))
-
-        img = wx.Image(location)
-
-        # img = bitmap.ConvertToImage()
-
+        img = wx.Image(fileFullPath)
         W = img.GetWidth()
         H = img.GetHeight()
-
-        nW = W
-        nH = H
-
         if W > w or H > h:
-
             r = h / w
             R = H / W
-
             if r >= R:
                 # fit width
                 nW = w
                 nH = nW * R
-
             else:
                 # fit height
                 nH = h
                 nW = nH * (1 / R)
-
-            img = img.Scale(nW, nH, wx.IMAGE_QUALITY_HIGH)
+            img = img.Scale(int(nW), int(nH), wx.IMAGE_QUALITY_HIGH)
         else:
-
             r = h / w
             R = H / W
-
             if r >= R:
                 # fit width
                 nW = w
                 nH = nW * R
-
             else:
                 # fit height
                 nH = h
                 nW = nH * (1 / R)
-
-            img = img.Scale(nW, nH, wx.IMAGE_QUALITY_HIGH)
+            img = img.Scale(int(nW), int(nH), wx.IMAGE_QUALITY_HIGH)
 
         print("pic:" + str(W) + " " + str(H))
         print("sc:" + str(nW) + " " + str(nH))
-        self.photo.SetBitmap(wx.Bitmap(img))
-        posX = w / 2 - nW / 2
-        self.photo.SetPosition((posX, 0))
-        self.photo.SetBackgroundColour("Grey")
-        self.panel1.SetBackgroundColour("Grey")
-        self.panel1.Refresh()
-        pass
-
-    def BuildFileTree(self, data, showFile=True):
-        self.file_tree.DeleteAllItems()
-
-        root_item = self.file_tree.AddRoot(data["path"], ct_type=0)
-
-        for folders in data["folders"]:
-            self.AddFileTreeBlock(folders, root_item, showFile)
-        if showFile:
-            for files in data["files"]:
-                self.file_tree.AppendItem(root_item, files, ct_type=0)
-
-                # item = self.file_tree.AppendItem(self.root, "wangjian", ct_type=0)
-        # self.file_tree.ExpandAll()
-        self.file_tree.Expand(root_item)
-
-    def AddFileTreeBlock(self, data, root_item, showFile=True):
-        item = self.file_tree.AppendItem(root_item, data["name"], ct_type=0, data=data)
-
-        for folders in data["folders"]:
-            self.AddFileTreeBlock(folders, item, showFile)
-        if showFile:
-            for files in data["files"]:
-                self.file_tree.AppendItem(item, files, ct_type=0)
-
-        pass
-
-    def ListBoxFilesFill(self, path, f_names):
-        self.list_box_files.Clear()
-        self.list_box_files_path = path
-        if len(f_names) > 0:
-            for f in f_names:
-                self.list_box_files.Append(f)
-            self.list_box_files.AcceptsFocus()
-            self.list_box_files.SetSelection(0)
-            self.ShowPic(os.path.join(path, f_names[0]))
-        pass
-
-    def OnTreeFolderItemActived(self, event):
-        print(event._item._data["path"])
-        self.open_file(event._item._data["path"])
-
-    def OnTreeFolderItemSelect(self, event):
-        print(event._item._data["path"])
-        self.ListBoxFilesFill(event._item._data["path"], event._item._data["files"])
-
-    def OnDropFiles(self, target, x, y, paths):
-        # print(target)
-        # print(x)
-        # print(y)
-        # print(f_names)
-
-        path = paths[0]
-
-        if os.path.isdir(path):
-            # data = self.MakeFolderTree(path)
-            data = self.MakePhotoFolderTree(path)
-            self.list_box_root.Append(path, data)
-            self.BuildFileTree(data, False)
-
-    def MakeFolderTree(self, path):
-        name = ntpath.basename(path)
-        folders = []
-        files = []
-        for file_name in os.listdir(path):
-            full_path = os.path.join(path, file_name)
-            if os.path.isdir(full_path):
-                folders.append(self.MakeFolderTree(full_path))
-            else:
-                files.append(file_name)
-        return {"name": name, "path": path, "folders": folders, "files": files}
-
-    def MakePhotoFolderTree(self, path):
-        name = ntpath.basename(path)
-        folders = []
-        files = []
-        for file_name in os.listdir(path):
-            full_path = os.path.join(path, file_name)
-            if os.path.isdir(full_path):
-                folder_block = self.MakePhotoFolderTree(full_path)
-                if len(folder_block["folders"]) != 0 or len(folder_block["files"]) != 0:
-                    folders.append(folder_block)
-            else:
-                if file_name.endswith(".png") or file_name.endswith(".jpg"):
-                    files.append(file_name)
-        return {"name": name, "path": path, "folders": folders, "files": files}
-
-    def open_file(self, path):
-        if platform.system() == "Windows":
-            subprocess.Popen(["explorer", "/select,", path])
-        elif platform.system() == "Darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
+        self.rightPhoto.SetBitmap(wx.Bitmap(img))
+        posX = int(w / 2 - nW / 2)
+        posY = int(h / 2 - nH / 2)
+        self.rightPhoto.SetPosition((posX, posY))
+        self.rightPanel.Refresh()
 
 
 if __name__ == '__main__':
     app = wx.App()
-    Application(None, title="Border")
+    Application(None, title="PhotoGallery")
     app.MainLoop()
